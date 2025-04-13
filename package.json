@@ -1,0 +1,39 @@
+{
+    "name": "aveum-network-bot",
+    "version": "1.0.0",
+    "description": "CLI-based automation tool for Aveum Network mining",
+    "main": "index.js",
+    "scripts": {
+      "start": "node index.js",
+      "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/airdropinsiders/Aveum-Network-Bot.git"
+    },
+    "keywords": [
+      "aveum",
+      "blockchain",
+      "mining",
+      "crypto",
+      "airdrop",
+      "automation",
+      "bot"
+    ],
+    "author": "Airdrop Insiders",
+    "license": "MIT",
+    "bugs": {
+      "url": "https://github.com/airdropinsiders/Aveum-Network-Bot/issues"
+    },
+    "homepage": "https://github.com/airdropinsiders/Aveum-Network-Bot#readme",
+    "dependencies": {
+      "axios": "^1.5.0",
+      "blessed": "^0.1.81",
+      "colors": "^1.4.0",
+      "crypto": "^1.0.1",
+      "dotenv": "^16.3.1"
+    },
+    "engines": {
+      "node": ">=14.0.0"
+    }
+  }
