@@ -14,7 +14,11 @@ const API_ENDPOINTS = {
   stopHub: '/users/stop-hub',
   hubStatus: '/users/hub-status',
   profile: '/users/profile',
-  checkBan: '/users/check-ban'
+  checkBan: '/users/check-ban',
+  claimReward: '/users/claim-reward',
+  discoverFeed: '/users/discover-feed',
+  discoverOnlineUsers: '/users/discover-online-users',
+  toggleLike: '/users/toggle-like/'
 };
 
 const ANDROID_DEVICE_MODELS = [
@@ -26,7 +30,17 @@ const ANDROID_DEVICE_MODELS = [
   'Vivo X90', 'Vivo V25', 'Vivo Y35', 'Oppo Reno 8', 'Oppo Find X5'
 ];
 
-const ANDROID_VERSIONS = ['31', '32', '33', '34'];
+const ANDROID_VERSIONS = ['10', '11', '12', '13'];
+
+const BOT_MODE = {
+  MINING: 'mining',
+  AUTO_LIKE: 'auto_like'
+};
+
+let currentBotMode = BOT_MODE.MINING;
+let autoLikeRunning = false;
+let processedPostIds = new Set();
+let processedUserIds = new Set();
 
 function generateRandomDeviceId() {
   return crypto.randomBytes(8).toString('hex');
@@ -38,6 +52,10 @@ function getRandomDeviceModel() {
 
 function getRandomAndroidVersion() {
   return ANDROID_VERSIONS[Math.floor(Math.random() * ANDROID_VERSIONS.length)];
+}
+
+function getRandomDelay(min, max) {
+  return Math.floor(Math.random() * (max - min + 1) + min);
 }
 
 const getHeaders = (token = null) => {
@@ -168,6 +186,27 @@ async function startHubMining() {
   }
 }
 
+async function claimReward() {
+  try {
+    const response = await axios.post(
+      `${API_BASE_URL}${API_ENDPOINTS.claimReward}`, 
+      {}, 
+      { headers: getHeaders(auth.getToken()) }
+    );
+    logMessage('✅ Reward claimed successfully!', 'success');
+    if (response.data && response.data.reward) {
+      logMessage(`Claimed ${response.data.reward} AVEUM!`, 'success');
+    }
+    return response.data;
+  } catch (error) {
+    logMessage('❌ Error claiming reward: ' + error.message, 'error');
+    if (error.response) {
+      logMessage('Response data: ' + JSON.stringify(error.response.data), 'error');
+    }
+    return null;
+  }
+}
+
 async function getHubStatus() {
   try {
     const response = await axios.get(
@@ -181,6 +220,56 @@ async function getHubStatus() {
   }
 }
 
+async function getDiscoverFeed(page = 1, limit = 20) {
+  try {
+    const response = await axios.get(
+      `${API_BASE_URL}${API_ENDPOINTS.discoverFeed}?page=${page}&limit=${limit}`, 
+      { headers: getHeaders(auth.getToken()) }
+    );
+    
+    // Log the structure for debugging
+    logMessage(`Received discover feed data. Response structure: ${Object.keys(response.data).join(', ')}`, 'info');
+    
+    return response.data;
+  } catch (error) {
+    logMessage('Error fetching discover feed: ' + error.message, 'error');
+    return null;
+  }
+}
+
+async function getDiscoverOnlineUsers(page = 1, limit = 20) {
+  try {
+    const response = await axios.get(
+      `${API_BASE_URL}${API_ENDPOINTS.discoverOnlineUsers}?page=${page}&limit=${limit}`, 
+      { headers: getHeaders(auth.getToken()) }
+    );
+    
+    return response.data;
+  } catch (error) {
+    logMessage('Error fetching online users: ' + error.message, 'error');
+    return null;
+  }
+}
+
+async function toggleLike(userId) {
+  try {
+    const response = await axios.post(
+      `${API_BASE_URL}${API_ENDPOINTS.toggleLike}${userId}`, 
+      {}, 
+      { headers: getHeaders(auth.getToken()) }
+    );
+    logMessage(`✅ Successfully liked user ID: ${userId}`, 'success');
+    return response.data;
+  } catch (error) {
+    logMessage(`❌ Error liking user ID ${userId}: ${error.message}`, 'error');
+    if (error.response) {
+      logMessage(`Response data: ${JSON.stringify(error.response.data)}`, 'error');
+    }
+    return null;
+  }
+}
+
+// Create UI
 const screen = blessed.screen({
   smartCSR: true,
   title: 'Aveum Mining Bot'
@@ -199,8 +288,27 @@ const headerBox = blessed.box({
   }
 });
 
-const userInfoBox = blessed.box({
+const modeBox = blessed.box({
   top: 3,
+  left: 0,
+  width: '100%',
+  height: 3,
+  content: '{center}CURRENT MODE: MINING{/center}',
+  tags: true,
+  style: {
+    fg: 'yellow',
+    bg: 'black',
+    border: {
+      fg: 'white'
+    }
+  },
+  border: {
+    type: 'line'
+  }
+});
+
+const userInfoBox = blessed.box({
+  top: 6,
   left: 0,
   width: '100%',
   height: 7,
@@ -219,7 +327,7 @@ const userInfoBox = blessed.box({
 });
 
 const miningStatusBox = blessed.box({
-  top: 10,
+  top: 13,
   left: 0,
   width: '100%',
   height: 8,
@@ -237,8 +345,28 @@ const miningStatusBox = blessed.box({
   }
 });
 
+const autoLikeStatusBox = blessed.box({
+  top: 13,
+  left: 0,
+  width: '100%',
+  height: 8,
+  content: 'Auto Like status will appear here when active',
+  tags: true,
+  visible: false,
+  style: {
+    fg: 'white',
+    bg: 'black',
+    border: {
+      fg: 'white'
+    }
+  },
+  border: {
+    type: 'line'
+  }
+});
+
 const logBox = blessed.log({
-  top: 18,
+  top: 21,
   left: 0,
   width: '100%',
   height: 8,
@@ -269,7 +397,7 @@ const statusBox = blessed.box({
   left: 0,
   width: '100%',
   height: 3,
-  content: '{center}Press [q] to Quit | [r] to Refresh Token{/center}',
+  content: '{center}Press [q] to Quit | [r] to Refresh Token | [m] Toggle Mining/Auto-Like{/center}',
   tags: true,
   style: {
     fg: 'white',
@@ -284,8 +412,10 @@ const statusBox = blessed.box({
 });
 
 screen.append(headerBox);
+screen.append(modeBox);
 screen.append(userInfoBox);
 screen.append(miningStatusBox);
+screen.append(autoLikeStatusBox);
 screen.append(logBox);
 screen.append(statusBox);
 
@@ -345,8 +475,7 @@ async function updateUserInfo() {
 
 async function updateMiningStatus() {
   try {
-    if (!auth.isAuthenticated()) {
-      miningStatusBox.setContent('{red-fg}Not logged in. Please check credentials.{/red-fg}');
+    if (!auth.isAuthenticated() || currentBotMode !== BOT_MODE.MINING) {
       return;
     }
     
@@ -358,6 +487,15 @@ async function updateMiningStatus() {
     }
     
     if (hubStatus.isHub) {
+      if (hubStatus.remainingTime <= 0.001) {
+        logMessage('Mining complete! Claiming reward...', 'success');
+        await claimReward();
+        logMessage('Starting new mining session...', 'info');
+        await startHubMining();
+        setTimeout(updateMiningStatus, 2000);
+        return;
+      }
+      
       miningStatusBox.setContent(
         `{yellow-fg}Mining Status:{/yellow-fg} {green-fg}ACTIVE{/green-fg}\n` +
         `{yellow-fg}Start Time:{/yellow-fg} {green-fg}${hubStatus.startTime}{/green-fg}\n` +
@@ -392,7 +530,7 @@ async function updateMiningStatus() {
 
 async function ensureMining() {
   try {
-    if (!auth.isAuthenticated()) {
+    if (!auth.isAuthenticated() || currentBotMode !== BOT_MODE.MINING) {
       return;
     }
     
@@ -401,10 +539,179 @@ async function ensureMining() {
     if (hubStatus && !hubStatus.isHub) {
       logMessage('Mining check: Mining is not active. Starting...', 'warning');
       await startHubMining();
+    } else if (hubStatus && hubStatus.isHub && hubStatus.remainingTime <= 0.001) {
+      logMessage('Mining complete! Claiming reward...', 'success');
+      await claimReward();
+      logMessage('Starting new mining session...', 'info');
+      await startHubMining();
     }
   } catch (error) {
     logMessage('Error checking mining status: ' + error.message, 'error');
   }
+}
+
+async function runAutoLike() {
+  if (!auth.isAuthenticated() || currentBotMode !== BOT_MODE.AUTO_LIKE || autoLikeRunning) {
+    return;
+  }
+  
+  autoLikeRunning = true;
+  let totalLiked = 0;
+  
+  try {
+    async function processUsers(page, source) {
+      logMessage(`Fetching ${source} page ${page}...`, 'info');
+      
+      let data;
+      if (source === 'discover feed') {
+        data = await getDiscoverFeed(page, 20);
+      } else {
+        data = await getDiscoverOnlineUsers(page, 20);
+      }
+      
+      if (!data) {
+        logMessage(`Could not fetch ${source}`, 'warning');
+        return 0;
+      }
+      
+      let users = [];
+      if (data.users && Array.isArray(data.users)) {
+        users = data.users;
+        logMessage(`Found ${users.length} users in ${source}`, 'info');
+      } else if (data.posts && Array.isArray(data.posts)) {
+        users = data.posts.map(post => ({
+          id: post.user_id || post.id,
+          username: post.username,
+          is_liked: post.liked
+        }));
+        logMessage(`Found ${users.length} posts in ${source}`, 'info');
+      } else {
+        logMessage(`Unexpected data structure in ${source}. Available keys: ${Object.keys(data).join(', ')}`, 'warning');
+        return 0;
+      }
+      
+      let likedCount = 0;
+      
+      for (const user of users) {
+        if (currentBotMode !== BOT_MODE.AUTO_LIKE) break;
+        
+        if (processedUserIds.has(user.id)) {
+          continue;
+        }
+        
+        if (user.is_liked) {
+          processedUserIds.add(user.id);
+          continue;
+        }
+        
+        logMessage(`Liking user ID: ${user.id}${user.username ? ` (${user.username})` : ''}...`, 'info');
+        await toggleLike(user.id);
+        processedUserIds.add(user.id);
+        totalLiked++;
+        likedCount++;
+        
+        updateAutoLikeStatus(totalLiked);
+        
+        const delay = getRandomDelay(2000, 5000);
+        logMessage(`Waiting ${delay/1000} seconds before next like...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+      
+      return likedCount;
+    }
+    
+    let currentPage = 1;
+    const maxPages = 5; 
+    
+    while (currentPage <= maxPages && currentBotMode === BOT_MODE.AUTO_LIKE) {
+      let totalProcessed = 0;
+      
+      totalProcessed += await processUsers(currentPage, 'discover feed');
+      
+      if (totalProcessed < 5 && currentBotMode === BOT_MODE.AUTO_LIKE) {
+        await processUsers(currentPage, 'online users');
+      }
+      
+      currentPage++;
+      
+      if (currentPage <= maxPages && currentBotMode === BOT_MODE.AUTO_LIKE) {
+        const pageDelay = getRandomDelay(5000, 10000);
+        logMessage(`Waiting ${pageDelay/1000} seconds before fetching next page...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, pageDelay));
+      }
+    }
+    
+    logMessage(`Auto-like session completed. Liked ${totalLiked} users.`, 'success');
+    
+    if (currentBotMode === BOT_MODE.AUTO_LIKE) {
+      const resetDelay = getRandomDelay(60000, 120000);
+      logMessage(`Taking a break. Will restart auto-like in ${resetDelay/1000} seconds...`, 'info');
+      setTimeout(() => {
+        autoLikeRunning = false;
+        if (currentBotMode === BOT_MODE.AUTO_LIKE) {
+          runAutoLike();
+        }
+      }, resetDelay);
+    } else {
+      autoLikeRunning = false;
+    }
+    
+  } catch (error) {
+    logMessage(`Error in auto-like: ${error.message}`, 'error');
+    autoLikeRunning = false;
+    
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      logMessage('Authentication error. Trying to login again...', 'warning');
+      await auth.login();
+    }
+    
+    setTimeout(() => {
+      if (currentBotMode === BOT_MODE.AUTO_LIKE) {
+        autoLikeRunning = false;
+        runAutoLike();
+      }
+    }, 10000);
+  }
+}
+
+function updateAutoLikeStatus(totalLiked) {
+  autoLikeStatusBox.setContent(
+    `{yellow-fg}Auto Like Status:{/yellow-fg} {green-fg}ACTIVE{/green-fg}\n` +
+    `{yellow-fg}Total Users Liked:{/yellow-fg} {green-fg}${totalLiked}{/green-fg}\n` +
+    `{yellow-fg}Processed Users:{/yellow-fg} {green-fg}${processedUserIds.size}{/green-fg}\n` +
+    `{yellow-fg}Started At:{/yellow-fg} {green-fg}${new Date().toLocaleTimeString()}{/green-fg}`
+  );
+  screen.render();
+}
+
+function updateModeDisplay() {
+  modeBox.setContent(`{center}CURRENT MODE: ${currentBotMode === BOT_MODE.MINING ? '{green-fg}MINING{/green-fg}' : '{cyan-fg}AUTO LIKE{/cyan-fg}'}{/center}`);
+  
+  if (currentBotMode === BOT_MODE.MINING) {
+    miningStatusBox.show();
+    autoLikeStatusBox.hide();
+  } else {
+    miningStatusBox.hide();
+    autoLikeStatusBox.show();
+  }
+  
+  screen.render();
+}
+
+function toggleBotMode() {
+  if (currentBotMode === BOT_MODE.MINING) {
+    currentBotMode = BOT_MODE.AUTO_LIKE;
+    logMessage('Switching to AUTO LIKE mode', 'info');
+    if (!autoLikeRunning) {
+      runAutoLike();
+    }
+  } else {
+    currentBotMode = BOT_MODE.MINING;
+    logMessage('Switching to MINING mode', 'info');
+    setTimeout(updateMiningStatus, 1000);
+  }
+  
+  updateModeDisplay();
 }
 
 async function runBot() {
@@ -417,15 +724,22 @@ async function runBot() {
   }
   
   await updateUserInfo();
+  updateModeDisplay();
   await updateMiningStatus();
   
   const refreshInterval = setInterval(async () => {
     await updateUserInfo();
-    await updateMiningStatus();
+    if (currentBotMode === BOT_MODE.MINING) {
+      await updateMiningStatus();
+    }
   }, 10000); 
   
   const miningCheckInterval = setInterval(async () => {
-    await ensureMining();
+    if (currentBotMode === BOT_MODE.MINING) {
+      await ensureMining();
+    } else if (currentBotMode === BOT_MODE.AUTO_LIKE && !autoLikeRunning) {
+      runAutoLike();
+    }
   }, 30000); 
   
   screen.key(['q', 'C-c'], () => {
@@ -443,8 +757,14 @@ async function runBot() {
     if (auth.isAuthenticated()) {
       logMessage('Token refreshed successfully!', 'success');
       await updateUserInfo();
-      await updateMiningStatus();
+      if (currentBotMode === BOT_MODE.MINING) {
+        await updateMiningStatus();
+      }
     }
+  });
+  
+  screen.key('m', () => {
+    toggleBotMode();
   });
   
   screen.on('resize', () => {
